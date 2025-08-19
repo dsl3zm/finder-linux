@@ -1,0 +1,10 @@
+[project]
+name = "finder-linux"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pygobject>=3.52.3",
+    "pynput>=1.8.1",
+]
