@@ -1,19 +1,12 @@
 import gi
 import sys
+import os
+from pathlib import Path
 
-# Require GTK version 4.0
+# Require GTK version 4.0 and Adwaita for icons
 gi.require_version('Gtk', '4.0')
-from gi.repository import Gtk, Gio, GLib, Gdk
-
-# --- Required for Global Hotkeys ---
-# This script now requires the 'pynput' library.
-# Install it using: pip install pynput
-try:
-    from pynput import keyboard
-except ImportError:
-    print("Error: The 'pynput' library is required for global shortcuts.")
-    print("Please install it using: pip install pynput")
-    sys.exit(1)
+gi.require_version('Adw', '1')
+from gi.repository import Gtk, Gio, GLib, Adw, Gdk
 
 class SearchResultRow(Gtk.ListBoxRow):
     """
@@ -26,8 +19,6 @@ class SearchResultRow(Gtk.ListBoxRow):
 
         # Get the application's icon
         gicon = app_info.get_icon()
-        if not gicon:
-            gicon = Gio.ThemedIcon.new("application-x-executable") # Fallback icon
         icon = Gtk.Image.new_from_gicon(gicon)
         icon.set_icon_size(Gtk.IconSize.LARGE)
         icon.set_margin_end(10)
@@ -48,34 +39,27 @@ class SearchResultRow(Gtk.ListBoxRow):
 
         # Main box for the row
         hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        hbox.set_margin_top(20)
-        hbox.set_margin_bottom(20)
-        hbox.set_margin_start(20)
-        hbox.set_margin_end(20)
+        hbox.set_margin_top(6)
+        hbox.set_margin_bottom(6)
+        hbox.set_margin_start(6)
+        hbox.set_margin_end(6)
         hbox.append(icon)
         hbox.append(vbox)
         
         self.set_child(hbox)
 
 
-# Main Application Window Class
-class SearchBar(Gtk.ApplicationWindow):
+class AppWindow(Gtk.ApplicationWindow):
     """
-    This class represents the main application window.
-    It sets up the UI and a shortcut controller for window-specific actions (like 'Esc').
+    The main application window, providing an application search interface.
     """
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.all_apps = []
-        # --- Window Configuration ---
-        self.set_title("Finder")
-        self.set_default_size(800, 0)
-        self.set_resizable(True)
 
-        # Making the window undecorated and modal.
-        # This combination should be treated as a dialog/popup by the window manager.
-        self.set_decorated(False)
-        self.set_modal(True)
+        # Set up the window
+        self.set_default_size(600, 400)
+        self.set_title("Application Search")
 
         # Main vertical layout
         main_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -95,7 +79,7 @@ class SearchBar(Gtk.ApplicationWindow):
         search_controller.connect("key-pressed", self.on_search_key_pressed)
         self.search_entry.add_controller(search_controller)
         main_vbox.append(self.search_entry)
-
+        
         # --- Results Area ---
         scrolled_window = Gtk.ScrolledWindow()
         scrolled_window.set_vexpand(True)
@@ -112,8 +96,6 @@ class SearchBar(Gtk.ApplicationWindow):
         main_vbox.append(scrolled_window)
         
         self.load_applications()
-
-        self.setup_shortcuts()
 
     def on_search_key_pressed(self, controller, keyval, keycode, state):
         """Handle key presses specifically in the search entry."""
@@ -142,23 +124,13 @@ class SearchBar(Gtk.ApplicationWindow):
     def on_search_changed(self, search_entry):
         """Called when text in the search entry changes."""
         search_query = search_entry.get_text().strip().lower()
-
+        
         # Clear previous results
         while child := self.results_listbox.get_row_at_index(0):
             self.results_listbox.remove(child)
 
         if len(search_query) > 0:
             self.filter_applications(search_query)
-
-        # --- Resize window based on number of results ---
-        num_results = len(list(self.results_listbox))
-        if num_results > 0:
-            # Calculate new height: approx. 60px per row + search bar height
-            new_height = (num_results * 85) + 50
-            self.set_default_size(800, new_height)
-        else:
-            # Reset to a minimal height when there are no results
-            self.set_default_size(800, 0)
 
     def filter_applications(self, query):
         """Filters applications and populates the listbox with results."""
@@ -182,95 +154,25 @@ class SearchBar(Gtk.ApplicationWindow):
         except GLib.Error as e:
             print(f"Error launching application: {e.message}")
 
-    def on_hide_shortcut(self, widget, args):
-        """Callback function executed when the hide shortcut is triggered."""
-        self.set_visible(False)
-        return GLib.SOURCE_REMOVE
 
-    def on_show_shortcut(self, widget, args):
-        """Callback function executed when the show shortcut is triggered."""
-        self.set_visible(True)
-        self.present()
-        self.search_entry.grab_focus()
-        return GLib.SOURCE_REMOVE
-
-    def setup_shortcuts(self):
-        """
-        Initializes a ShortcutController for shortcuts that should only
-        work when this window is focused.
-        """
-        controller = Gtk.ShortcutController()
-
-        # --- Shortcut to HIDE the window (Escape key) ---
-        # This shortcut is window-specific, so it stays here. It will only
-        # trigger when the window has focus, which is the desired behavior.
-        trigger_hide = Gtk.ShortcutTrigger.parse_string("Escape")
-        action_hide = Gtk.CallbackAction.new(self.on_hide_shortcut)
-        shortcut_hide = Gtk.Shortcut.new(trigger_hide, action_hide)
-        controller.add_shortcut(shortcut_hide)
-
-        self.add_controller(controller)
-
-# Main Application Class
-class MyApp(Gtk.Application):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self.win = None
-        self.hotkey_listener = None
+class MyApplication(Gtk.Application):
+    """
+    The main GTK Application class.
+    """
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, application_id="org.example.applauncher", **kwargs)
+        self.window = None
 
     def do_activate(self):
-        """Called when the application is launched or activated."""
-        if not self.win:
-            self.win = SearchBar(application=self)
-        self.win.present()
-
-    def do_startup(self):
-        """Called once when the application first starts."""
-        Gtk.Application.do_startup(self)
-        self.setup_global_hotkeys()
-
-    def do_shutdown(self):
-        """Called when the application is about to quit."""
-        print("Shutting down. Stopping global hotkey listener.")
-        if self.hotkey_listener:
-            self.hotkey_listener.stop()
-        Gtk.Application.do_shutdown(self)
-
-    def setup_global_hotkeys(self):
-        """
-        Sets up the pynput.GlobalHotKeys listener to capture key combinations
-        anywhere in the OS.
-        """
-        print("Setting up global hotkey listener...")
-        hotkeys = {
-            '<alt>+<space>': self.on_show_shortcut,
-            '<esc>': self.on_hide_shortcut
-        }
-        self.hotkey_listener = keyboard.GlobalHotKeys(hotkeys)
-        self.hotkey_listener.start()
-
-    def on_show_shortcut(self):
-        """
-        Callback for the global 'show' hotkey. This is called from a
-        separate thread by the pynput listener.
-        """
-        print("Alt+Space pressed (global): Activating window.")
-        # GUI operations must be done in the main GTK thread.
-        # GLib.idle_add() schedules our function to be run safely in the main loop.
-        GLib.idle_add(self.win.on_show_shortcut, None, None)
-
-    def on_hide_shortcut(self):
-        """
-        Callback for the global 'hide' hotkey. This is called from a
-        separate thread by the pynput listener.
-        """
-        print("Escape pressed (global): Hiding window.")
-        # GUI operations must be done in the main GTK thread.
-        # GLib.idle_add() schedules our function to be run safely in the main loop.
-        GLib.idle_add(self.win.on_hide_shortcut, None, None)
-
+        """Activates the application by creating and showing the main window."""
+        if not self.window:
+            self.window = AppWindow(application=self, title="App Launcher")
+        self.window.present()
 
 if __name__ == "__main__":
-    app = MyApp(application_id="com.example.gtk.globalshortcuts")
+    # Initialize Adwaita for modern styling
+    Adw.init()
+    app = MyApplication()
     exit_status = app.run(sys.argv)
     sys.exit(exit_status)
+
