@@ -85,6 +85,7 @@ class SearchBar(Gtk.ApplicationWindow):
         self.search_entry = Gtk.SearchEntry()
         self.search_entry.set_placeholder_text("Search for applications...")
         self.search_entry.connect("search-changed", self.on_search_changed)
+        self.search_entry.connect("activate", self.on_search_activate)
         self.search_entry.set_margin_start(10)
         self.search_entry.set_margin_end(10)
         self.search_entry.set_margin_top(10)
@@ -97,8 +98,9 @@ class SearchBar(Gtk.ApplicationWindow):
         main_vbox.append(self.search_entry)
 
         # --- Results Area ---
-        scrolled_window = Gtk.ScrolledWindow()
-        scrolled_window.set_vexpand(True)
+        self.scrolled_window = Gtk.ScrolledWindow()
+        self.scrolled_window.set_vexpand(True)
+        self.scrolled_window.set_visible(False) # Hide initially
         self.results_listbox = Gtk.ListBox()
         self.results_listbox.set_selection_mode(Gtk.SelectionMode.SINGLE)
         self.results_listbox.connect("row-activated", self.on_result_activated)
@@ -107,24 +109,51 @@ class SearchBar(Gtk.ApplicationWindow):
         list_controller = Gtk.EventControllerKey.new()
         list_controller.connect("key-pressed", self.on_list_key_pressed)
         self.results_listbox.add_controller(list_controller)
-        scrolled_window.set_child(self.results_listbox)
+        self.scrolled_window.set_child(self.results_listbox)
         
-        main_vbox.append(scrolled_window)
+        main_vbox.append(self.scrolled_window)
         
         self.load_applications()
 
         self.setup_shortcuts()
 
+    def on_search_activate(self, entry):
+        """Called when Enter is pressed in the search entry."""
+        selected_row = self.results_listbox.get_selected_row()
+        if selected_row:
+            self.on_result_activated(self.results_listbox, selected_row)
+
     def on_search_key_pressed(self, controller, keyval, keycode, state):
         """Handle key presses specifically in the search entry."""
+        if keyval not in (Gdk.KEY_Down, Gdk.KEY_Up):
+            return False
+
+        num_rows = len(list(self.results_listbox))
+        if num_rows == 0:
+            return False
+
+        selected_row = self.results_listbox.get_selected_row()
+
         if keyval == Gdk.KEY_Down:
-            # If there are results, move focus to the listbox
-            if self.results_listbox.get_first_child():
-                self.results_listbox.grab_focus()
-                # Also select the first row to make navigation intuitive
-                self.results_listbox.select_row(self.results_listbox.get_row_at_index(0))
-                return True # We've handled this key press
-        return False # Let other handlers process the event
+            if selected_row is None:
+                current_index = -1
+            else:
+                current_index = selected_row.get_index()
+
+            if current_index < num_rows - 1:
+                next_row = self.results_listbox.get_row_at_index(current_index + 1)
+                self.results_listbox.select_row(next_row)
+            return True
+
+        elif keyval == Gdk.KEY_Up:
+            if selected_row is not None:
+                current_index = selected_row.get_index()
+                if current_index > 0:
+                    prev_row = self.results_listbox.get_row_at_index(current_index - 1)
+                    self.results_listbox.select_row(prev_row)
+            return True
+
+        return False
 
     def on_list_key_pressed(self, controller, keyval, keycode, state):
         """Handle key presses specifically in the results list."""
@@ -153,10 +182,12 @@ class SearchBar(Gtk.ApplicationWindow):
         # --- Resize window based on number of results ---
         num_results = len(list(self.results_listbox))
         if num_results > 0:
+            self.scrolled_window.set_visible(True)
             # Calculate new height: approx. 60px per row + search bar height
             new_height = (num_results * 85) + 50
             self.set_default_size(800, new_height)
         else:
+            self.scrolled_window.set_visible(False)
             # Reset to a minimal height when there are no results
             self.set_default_size(800, 0)
 
@@ -165,8 +196,7 @@ class SearchBar(Gtk.ApplicationWindow):
         for app_info in self.all_apps:
             # Check against name, description, and keywords
             if (query in app_info.get_display_name().lower() or
-                (app_info.get_description() and query in app_info.get_description().lower()) or
-                (app_info.get_keywords() and any(query in k.lower() for k in app_info.get_keywords()))):
+                (app_info.get_description() and query in app_info.get_description().lower())):
                 
                 result_widget = SearchResultRow(app_info)
                 self.results_listbox.append(result_widget)
@@ -177,21 +207,14 @@ class SearchBar(Gtk.ApplicationWindow):
         app_info = row.app_info
         try:
             app_info.launch([], None)
-            # Close the launcher window after an app is successfully launched
-            self.get_application().quit()
+            # Hide the launcher window after an app is successfully launched
+            self.set_visible(False)
         except GLib.Error as e:
             print(f"Error launching application: {e.message}")
 
     def on_hide_shortcut(self, widget, args):
         """Callback function executed when the hide shortcut is triggered."""
         self.set_visible(False)
-        return GLib.SOURCE_REMOVE
-
-    def on_show_shortcut(self, widget, args):
-        """Callback function executed when the show shortcut is triggered."""
-        self.set_visible(True)
-        self.present()
-        self.search_entry.grab_focus()
         return GLib.SOURCE_REMOVE
 
     def setup_shortcuts(self):
@@ -223,6 +246,7 @@ class MyApp(Gtk.Application):
         if not self.win:
             self.win = SearchBar(application=self)
         self.win.present()
+        self.win.search_entry.grab_focus()
 
     def do_startup(self):
         """Called once when the application first starts."""
@@ -257,7 +281,7 @@ class MyApp(Gtk.Application):
         print("Alt+Space pressed (global): Activating window.")
         # GUI operations must be done in the main GTK thread.
         # GLib.idle_add() schedules our function to be run safely in the main loop.
-        GLib.idle_add(self.win.on_show_shortcut, None, None)
+        GLib.idle_add(self.activate)
 
     def on_hide_shortcut(self):
         """
