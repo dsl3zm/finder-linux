@@ -1,6 +1,6 @@
 ## Linux Finder
 
-This project is an attempt at a linux port of Mac's Finder
+This project is an attempt at a linux port of Mac's spotlight search
 and Windows' Power Toys Run
 
 ### Local
